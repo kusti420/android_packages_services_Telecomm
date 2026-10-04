@@ -63,4 +63,13 @@
     <!-- Title of the dialog "phone_strings_emergency_call_made_dialog_text_txt". -->
     <!-- [BACKUP_MESSAGE_ID: 6629412508584507377] -->
     <string name="phone_strings_emergency_call_made_dialog_title_txt">Emergency call made</string>
+
+    <!-- IchthysOS: CALL_PHONE shield. Title of the dialog shown before an app's call goes out. -->
+    <string name="ichthys_confirm_app_call_title">Place this call?</string>
+    <!-- IchthysOS: CALL_PHONE shield. Body of the dialog: which app wants to call which number. -->
+    <string name="ichthys_confirm_app_call"><xliff:g id="app_name">%1$s</xliff:g> wants to call <xliff:g id="number">%2$s</xliff:g>.</string>
+    <!-- IchthysOS: CALL_PHONE shield. Body of the dialog when the app cannot be named. -->
+    <string name="ichthys_confirm_app_call_unknown_app">An app wants to call <xliff:g id="number">%1$s</xliff:g>.</string>
+    <!-- IchthysOS: CALL_PHONE shield. Button that lets the call go out. -->
+    <string name="ichthys_confirm_app_call_button">Call</string>
 </resources>

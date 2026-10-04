@@ -2363,6 +2363,14 @@ public class TelecomServiceImpl {
                     extras.remove(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE);
                 }
 
+                // IchthysOS: CALL_PHONE shield. A call an app places goes through the user's
+                // confirmation first; the confirm dialog places it again if the user agrees.
+                if (!isSelfManagedRequest && maybeConfirmAppCall(handle, extras, callingPackage,
+                        Binder.getCallingUid(), Binder.getCallingUserHandle())) {
+                    event.setResult(ApiStats.RESULT_NORMAL);
+                    return;
+                }
+
                 // Note: we can still get here for the default/system dialer, even if the Phone
                 // permission is turned off. This is because the default/system dialer is always
                 // allowed to attempt to place a call (regardless of permission state), in case
@@ -3591,10 +3599,129 @@ public class TelecomServiceImpl {
             final String permission = Manifest.permission.ANSWER_PHONE_CALLS;
             enforcePermission(permission);
 
-            return mAppOpsManager.checkOp(AppOpsManager.OPSTR_ANSWER_PHONE_CALLS, uid,
-                    packageName) == AppOpsManager.MODE_ALLOWED;
+            if (mAppOpsManager.checkOp(AppOpsManager.OPSTR_ANSWER_PHONE_CALLS, uid,
+                    packageName) != AppOpsManager.MODE_ALLOWED) {
+                return false;
+            }
+            // IchthysOS: ANSWER_PHONE_CALLS shield. An app that is not the dialer, the SMS app or
+            // explicitly allowed gets the same answer as when the app op is denied.
+            // MODIFY_PHONE_STATE holders never reach this branch.
+            if (isAnswerCallsShielded(packageName, uid)) {
+                Log.i(TAG, "enforceAnswerCallPermission: shield refused %s", packageName);
+                return false;
+            }
+            return true;
         }
         return true;
+    }
+
+    /**
+     * IchthysOS: whether the {@link IchthysShield#FEATURE_ANSWER_CALLS} shield applies to
+     * {@code packageName}. {@code checkOp} above has already verified it belongs to {@code uid}.
+     */
+    private boolean isAnswerCallsShielded(String packageName, int uid) {
+        final boolean isDialer;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            isDialer = mDefaultDialerCache.isDefaultOrSystemDialer(packageName,
+                    UserHandle.getUserHandleForUid(uid).getIdentifier());
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return IchthysShield.isRestricted(mContext, IchthysShield.FEATURE_ANSWER_CALLS, uid,
+                packageName, isDialer);
+    }
+
+    /**
+     * IchthysOS: the {@link IchthysShield#FEATURE_CALL} shield on {@code placeCall}. When the
+     * call needs the user's confirmation, starts TelecomUi's confirm dialog and returns
+     * {@code true}; the dialog places the call again, as TelecomUi and marked confirmed, if the
+     * user agrees. Emergency numbers are never held back.
+     *
+     * <p>An {@code ACTION_CALL} intent arrives here as a {@code placeCall} from TelecomUi; the app
+     * that really sent it is in {@link IchthysShield#EXTRA_ORIGIN_PACKAGE}, which TelecomUi only
+     * forwards when TelecomShim recorded it. Both extras are removed before the call goes on.
+     */
+    private boolean maybeConfirmAppCall(Uri handle, Bundle extras, String callingPackage,
+            int callingUid, UserHandle userHandle) {
+        if (handle == null) {
+            return false;
+        }
+        String originPackage = callingPackage;
+        int originUid = callingUid;
+        if (callingPackage.equals(mTelecomUiPackageName)) {
+            final boolean confirmed;
+            if (extras != null) {
+                confirmed = extras.getBoolean(IchthysShield.EXTRA_CALL_CONFIRMED, false);
+                originPackage = extras.getString(IchthysShield.EXTRA_ORIGIN_PACKAGE);
+                originUid = extras.getInt(IchthysShield.EXTRA_ORIGIN_UID, Process.INVALID_UID);
+                extras.remove(IchthysShield.EXTRA_CALL_CONFIRMED);
+                extras.remove(IchthysShield.EXTRA_ORIGIN_PACKAGE);
+                extras.remove(IchthysShield.EXTRA_ORIGIN_UID);
+            } else {
+                confirmed = false;
+                originPackage = null;
+                originUid = Process.INVALID_UID;
+            }
+            if (confirmed) {
+                return false;
+            }
+            if (originUid == Process.INVALID_UID) {
+                // Launched straight into TelecomUi by an app we cannot name: treat it as an app.
+                originUid = userHandle.getUid(Process.FIRST_APPLICATION_UID);
+                originPackage = null;
+            }
+        } else if (mContext.checkCallingOrSelfPermission(CALL_PRIVILEGED)
+                == PackageManager.PERMISSION_GRANTED) {
+            return false;
+        }
+
+        final long token = Binder.clearCallingIdentity();
+        try {
+            if (TelephonyUtil.shouldProcessAsEmergency(mContext, handle)) {
+                return false;
+            }
+            final boolean isDialer = originPackage != null
+                    && mDefaultDialerCache.isDefaultOrSystemDialer(originPackage,
+                            userHandle.getIdentifier());
+            if (!IchthysShield.isRestricted(mContext, IchthysShield.FEATURE_CALL, originUid,
+                    originPackage, isDialer)) {
+                return false;
+            }
+
+            CharSequence appLabel = null;
+            if (originPackage != null) {
+                try {
+                    final PackageManager pm =
+                            mContext.createContextAsUser(userHandle, 0).getPackageManager();
+                    appLabel = pm.getApplicationInfo(originPackage, 0).loadLabel(pm);
+                } catch (PackageManager.NameNotFoundException e) {
+                    appLabel = originPackage;
+                }
+            }
+            Log.i(TAG, "maybeConfirmAppCall: asking the user before %s places a call",
+                    originPackage);
+            final Intent confirmIntent = new Intent();
+            confirmIntent.setClassName(mTelecomUiPackageName, IchthysShield.CONFIRM_ACTIVITY);
+            confirmIntent.putExtra(IchthysShield.EXTRA_CONFIRM_HANDLE, handle);
+            if (extras != null) {
+                confirmIntent.putExtra(IchthysShield.EXTRA_CONFIRM_EXTRAS,
+                        TelecomBundleUtils.defuse(extras));
+            }
+            if (appLabel != null) {
+                confirmIntent.putExtra(IchthysShield.EXTRA_CONFIRM_APP_LABEL,
+                        appLabel.toString());
+            }
+            confirmIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            mContext.startActivityAsUser(confirmIntent, userHandle);
+            return true;
+        } catch (RuntimeException e) {
+            // Unreadable means allowed, see IchthysShield.
+            Log.w(TAG, "maybeConfirmAppCall: shield failed open: %s", e);
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
     }
 
     /**

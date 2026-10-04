@@ -17,6 +17,7 @@
 package com.android.server.telecom.components;
 
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.os.Bundle;
@@ -35,6 +36,11 @@ public class UserCallActivity extends Activity {
     // stays the same. The prefix should not be overwritten based on UI package name.
     private static final String ACTION_ACTIVITY_NAME =
             "com.android.server.telecomui.components.UserCallActivity";
+    // IchthysOS: who really sent the CALL intent, for the CALL_PHONE shield. TelecomUi places the
+    // call itself, so without these Telecom would only ever see TelecomUi. Keep in sync with
+    // com.android.server.telecom.IchthysShield.
+    private static final String EXTRA_ORIGIN_PACKAGE = "org.ichthys.telecom.extra.ORIGIN_PACKAGE";
+    private static final String EXTRA_ORIGIN_UID = "org.ichthys.telecom.extra.ORIGIN_UID";
 
     @Override
     protected void onCreate(Bundle bundle) {
@@ -46,7 +52,15 @@ public class UserCallActivity extends Activity {
         newIntent.setAction(ACTION_CALL_TRAMPOLINE);
         newIntent.setComponent(new ComponentName(pkgName, ACTION_ACTIVITY_NAME));
         newIntent.setFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT);
-        startActivity(newIntent);
+        // IchthysOS: always overwrite, so an app cannot name someone else. This activity is
+        // platform-signed, so the launcher's identity is visible here without the app sharing it.
+        newIntent.putExtra(EXTRA_ORIGIN_PACKAGE, getLaunchedFromPackage());
+        newIntent.putExtra(EXTRA_ORIGIN_UID, getLaunchedFromUid());
+        // Share our own identity so TelecomUi can tell this trampoline from an app that launched
+        // it directly, and only trust the extras above in the first case.
+        ActivityOptions options = ActivityOptions.makeBasic();
+        options.setShareIdentityEnabled(true);
+        startActivity(newIntent, options.toBundle());
         finish();
     }
 

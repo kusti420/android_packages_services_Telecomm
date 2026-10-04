@@ -112,6 +112,16 @@
             android:theme="@style/Theme.Telecomm.Transparent">
         </activity>
 
+        <!-- IchthysOS: confirm sheet for calls placed by apps (CALL_PHONE shield). Not exported:
+             only Telecom starts it. Standard launch mode so a second request gets its own
+             dialog instead of silently replacing the first. -->
+        <activity android:name=".ui.IchthysCallConfirmActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/Theme.Telecomm.Transparent">
+        </activity>
+
         <activity android:name=".ui.CallRedirectionTimeoutDialogActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:excludeFromRecents="true"
