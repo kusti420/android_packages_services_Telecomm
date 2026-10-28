@@ -68,6 +68,12 @@ public final class IchthysShield {
     /** Feature name for refusing {@code ANSWER_PHONE_CALLS}. */
     public static final String FEATURE_ANSWER_CALLS = "answer_calls";
 
+    /**
+     * IchthysOS: the phone-number shield (telephony's IchthysShield.FEATURE_PHONE_NUMBER, same
+     * keys): Telecom reads the number as itself, so it has to apply it too.
+     */
+    public static final String FEATURE_PHONE_NUMBER = "phone_number";
+
     private static final String SHIELD_SETTING_PREFIX = "ichthys_";
     private static final String SHIELD_SETTING_SUFFIX = "_shield";
     private static final String ALLOWED_PACKAGES_SETTING_SUFFIX = "_allowed_pkgs";

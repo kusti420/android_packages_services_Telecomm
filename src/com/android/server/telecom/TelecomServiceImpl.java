@@ -749,6 +749,7 @@ public class TelecomServiceImpl {
                     }
                     Set<String> permissions = computePermissionsForBoundPackage(
                             Set.of(MODIFY_PHONE_STATE), null);
+                    final int callerUid = Binder.getCallingUid();
                     long token = Binder.clearCallingIdentity();
                     event.setResult(ApiStats.RESULT_NORMAL);
                     try {
@@ -762,7 +763,16 @@ public class TelecomServiceImpl {
                         if (hasUiAccess) {
                             return account;
                         }
-                        return maybeCleansePhoneAccount(account, permissions);
+                        account = maybeCleansePhoneAccount(account, permissions);
+                        // IchthysOS: a SIM account's address is the line 1 number; a caller
+                        // under the phone-number shield gets it empty, as with no number.
+                        if (account != null && account.getAddress() != null
+                                && isPhoneNumberShielded(callingPackage, callerUid)) {
+                            final Uri none = Uri.fromParts(PhoneAccount.SCHEME_TEL, "", null);
+                            account = account.toBuilder().setAddress(none)
+                                    .setSubscriptionAddress(none).build();
+                        }
+                        return account;
                     } catch (Exception e) {
                         event.setResult(ApiStats.RESULT_EXCEPTION);
                         Log.e(this, e, "getPhoneAccount %s", accountHandle);
@@ -1249,6 +1259,11 @@ public class TelecomServiceImpl {
                 if (!isPhoneAccountHandleVisibleToCallingUser(accountHandle,
                         callingUserHandle)) {
                     Log.d(this, "%s is not visible for the calling user [gL1N]", accountHandle);
+                    return null;
+                }
+                // IchthysOS: the number is read below as Telecom (exempt), so the phone-number
+                // shield is applied here, for the caller.
+                if (isPhoneNumberShielded(callingPackage, Binder.getCallingUid())) {
                     return null;
                 }
 
@@ -3613,6 +3628,23 @@ public class TelecomServiceImpl {
             return true;
         }
         return true;
+    }
+
+    /**
+     * IchthysOS: whether the {@link IchthysShield#FEATURE_PHONE_NUMBER} shield applies to
+     * {@code packageName} (already checked to belong to {@code uid} by the permission checks).
+     */
+    private boolean isPhoneNumberShielded(String packageName, int uid) {
+        final boolean isDialer;
+        final long token = Binder.clearCallingIdentity();
+        try {
+            isDialer = packageName != null && mDefaultDialerCache.isDefaultOrSystemDialer(
+                    packageName, UserHandle.getUserHandleForUid(uid).getIdentifier());
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return IchthysShield.isRestricted(mContext, IchthysShield.FEATURE_PHONE_NUMBER, uid,
+                packageName, isDialer);
     }
 
     /**
