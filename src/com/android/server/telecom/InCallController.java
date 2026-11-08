@@ -3351,6 +3351,19 @@ public class InCallController extends CallsManagerListenerBase implements
         return childCalls;
     }
 
+    /** IchthysOS: whether the app behind {@code info} is shielded from the call log. */
+    private boolean isIchthysCallLogShielded(InCallServiceInfo info) {
+        try {
+            final String pkg = info.getComponentName().getPackageName();
+            final UserHandle user = mCallsManager.getCurrentUserHandle();
+            return IchthysShield.isCallLogShielded(mContext, pkg, user,
+                    mDefaultDialerCache.isDefaultOrSystemDialer(pkg, user.getIdentifier()));
+        } catch (RuntimeException e) {
+            Log.w(this, "isIchthysCallLogShielded: %s", e);
+            return false;
+        }
+    }
+
     @VisibleForTesting
     public ParcelableCall sanitizeParcelableCallForService(
             InCallServiceInfo info, ParcelableCall parcelableCall) {
@@ -3376,6 +3389,31 @@ public class InCallController extends CallsManagerListenerBase implements
                     newBundle.remove(android.telecom.Call.EXTRA_IS_SUPPRESSED_BY_DO_NOT_DISTURB);
                     builder.setExtras(newBundle);
                 }
+            }
+        }
+
+        // IchthysOS: a non-UI InCallService (watch and glasses companions get
+        // MANAGE_ONGOING_CALLS through their roles) of an app the call-log shield gives an empty
+        // call log learns each call's state, but not who is calling: the number, names and photo
+        // would rebuild that log live, as the numbered PHONE_STATE did before TelephonyRegistry
+        // withheld it.
+        if (info.getType() == IN_CALL_SERVICE_TYPE_NON_UI && isIchthysCallLogShielded(info)) {
+            builder.setHandle(null);
+            builder.setHandlePresentation(TelecomManager.PRESENTATION_RESTRICTED);
+            builder.setCallerDisplayName(null);
+            builder.setCallerDisplayNamePresentation(TelecomManager.PRESENTATION_RESTRICTED);
+            builder.setContactDisplayName(null);
+            builder.setContactPhotoUri(null);
+            builder.setGatewayInfo(null);
+            // The extras as built so far (the contacts block above may have replaced them).
+            final Bundle extras = builder.createParcelableCall().getExtras();
+            if (extras != null) {
+                final Bundle stripped = extras.deepCopy();
+                stripped.remove(TelecomManager.EXTRA_INCOMING_CALL_ADDRESS);
+                stripped.remove(Connection.EXTRA_LAST_FORWARDED_NUMBER);
+                stripped.remove(Connection.EXTRA_CHILD_ADDRESS);
+                stripped.remove(Connection.EXTRA_CALL_SUBJECT);
+                builder.setExtras(stripped);
             }
         }
 

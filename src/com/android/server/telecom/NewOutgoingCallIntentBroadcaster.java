@@ -349,6 +349,23 @@ public class NewOutgoingCallIntentBroadcaster {
         broadcastIntent.addFlags(Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
         Log.i(this, "broadcastIntent: Sending non-blocking for %s to %s", mCall.getId(),
                 targetUser);
+        // IchthysOS: the dialled number goes only to the apps the call-log shield lets have it,
+        // the same recipients as the numbered PHONE_STATE broadcast (TelephonyRegistry).
+        final String[] included = targetUser != null && targetUser.getIdentifier() >= 0
+                ? IchthysShield.callLogNumberRecipients(mContext, targetUser) : null;
+        if (included != null) {
+            // BroadcastOptions.setIncludedPackages is hidden from the Telecom module: address
+            // each allowed package explicitly instead.
+            for (String pkg : included) {
+                final Intent perPackage = new Intent(broadcastIntent);
+                perPackage.setPackage(pkg);
+                mContext.sendBroadcastAsUser(
+                        perPackage,
+                        targetUser,
+                        Manifest.permission.PROCESS_OUTGOING_CALLS);
+            }
+            return;
+        }
         mContext.sendBroadcastAsUser(
                 broadcastIntent,
                 targetUser,

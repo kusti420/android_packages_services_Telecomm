@@ -27,6 +27,7 @@ import android.provider.Settings;
 import android.telecom.Log;
 import android.text.TextUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -74,6 +75,13 @@ public final class IchthysShield {
      */
     public static final String FEATURE_PHONE_NUMBER = "phone_number";
 
+    /**
+     * IchthysOS: the call-log shield (ContactsProvider's IchthysShield.FEATURE_CALL_LOG, same
+     * keys). The call log is empty for a shielded app; the numbers of calls as they happen must
+     * not reach it either (TelephonyRegistry already withholds the numbered PHONE_STATE).
+     */
+    public static final String FEATURE_CALL_LOG = "call_log";
+
     private static final String SHIELD_SETTING_PREFIX = "ichthys_";
     private static final String SHIELD_SETTING_SUFFIX = "_shield";
     private static final String ALLOWED_PACKAGES_SETTING_SUFFIX = "_allowed_pkgs";
@@ -106,6 +114,78 @@ public final class IchthysShield {
             "com.android.server.telecomui.ui.IchthysCallConfirmActivity";
 
     private IchthysShield() {}
+
+    /**
+     * IchthysOS: the packages of {@code user} that may learn the numbers of calls as they happen
+     * under the call-log shield, for {@code BroadcastOptions.setIncludedPackages}; null with the
+     * shield off or when they cannot be resolved (as stock). The same set as TelephonyRegistry's
+     * {@code callLogNumberRecipients} (numbered PHONE_STATE): "android" (system_server's
+     * runtime receivers), every preinstalled app, the dialer and SMS role holders and the user's
+     * call-log allow list. Named, so the runtime receivers of everyone else get nothing either.
+     */
+    public static String[] callLogNumberRecipients(Context context, UserHandle user) {
+        final long token = Binder.clearCallingIdentity();
+        try {
+            if (!isShieldOn(context, FEATURE_CALL_LOG, user)) {
+                return null;
+            }
+            final Context userContext = context.createContextAsUser(user, 0);
+            final List<String> out = new ArrayList<>();
+            out.add("android");
+            for (ApplicationInfo ai
+                    : userContext.getPackageManager().getInstalledApplications(0)) {
+                if ((ai.flags & (ApplicationInfo.FLAG_SYSTEM
+                        | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) {
+                    out.add(ai.packageName);
+                }
+            }
+            final RoleManager roles = context.getSystemService(RoleManager.class);
+            if (roles != null) {
+                out.addAll(roles.getRoleHoldersAsUser(RoleManager.ROLE_DIALER, user));
+                out.addAll(roles.getRoleHoldersAsUser(RoleManager.ROLE_SMS, user));
+            }
+            final String allowed = Settings.Secure.getString(userContext.getContentResolver(),
+                    getAllowedPackagesSetting(FEATURE_CALL_LOG));
+            if (!TextUtils.isEmpty(allowed)) {
+                for (String pkg : allowed.split(",")) {
+                    if (!pkg.trim().isEmpty()) {
+                        out.add(pkg.trim());
+                    }
+                }
+            }
+            return out.toArray(new String[0]);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "callLogNumberRecipients: unknown, not filtering: %s", e);
+            return null;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /**
+     * IchthysOS: whether the app {@code packageName} of {@code user} is shielded from the call
+     * log, so a non-UI InCallService of it (watch and glasses companions hold
+     * MANAGE_ONGOING_CALLS through their roles) gets the calls without who is calling. Same
+     * exemptions as {@link #isRestricted}; an unknown package is not shielded here (it can't be
+     * bound either).
+     */
+    public static boolean isCallLogShielded(Context context, String packageName,
+            UserHandle user, boolean isDefaultOrSystemDialer) {
+        if (TextUtils.isEmpty(packageName) || user == null) {
+            return false;
+        }
+        final long token = Binder.clearCallingIdentity();
+        final int uid;
+        try {
+            uid = context.createContextAsUser(user, 0).getPackageManager()
+                    .getPackageUid(packageName, 0);
+        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
+            return false;
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+        return isRestricted(context, FEATURE_CALL_LOG, uid, packageName, isDefaultOrSystemDialer);
+    }
 
     /** The per-user switch for {@code feature}, e.g. {@code ichthys_call_shield}. */
     public static String getShieldSetting(String feature) {
